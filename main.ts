@@ -24,245 +24,170 @@ export default class ObsidianToAnkiPlugin extends Plugin {
     return undefined;
   }
 
-  async checkAddableNotes(notes: any[]) {
-    // Check with AnkiConnect which notes can be added without errors
-    try {
-      const response = await fetch("http://localhost:8765", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          action: "canAddNotesWithErrorDetail",
-          version: 6,
-          params: {
-            notes: notes
-          }
-        })
-      });
-
-      const result = await response.json();
-
-      if (result.error) {
-        console.error("Error checking addable notes:", result.error);
-        return [];
-      }
-
-      // Log the status of each note's addability
-      result.result.forEach((noteResult: any, index: number) => {
-        if (noteResult.canAdd) {
-          console.log(`Note ${index} can be added.`);
-        } else {
-          console.warn(`Note ${index} cannot be added: ${noteResult.error}`);
-        }
-      });
-
-      return result.result.map((noteResult: any) => noteResult.canAdd);
-    } catch (err) {
-      console.error("Failed to check addable notes via AnkiConnect:", err);
-      return [];
-    }
-  }
-
   async onload() {
     console.log("Obsidian to Anki plugin has been loaded.");
 
     this.addRibbonIcon("dice", "Parse flashcards in current file", async () => {
       const activeFile = this.app.workspace.getActiveFile();
-      if (activeFile) {
-        // Retrieve deck name from file frontmatter
-        const deckName = this.getDeckName(activeFile);
-        if (deckName) {
-          console.log("Deck Name:", deckName);
+      if (!activeFile) {
+        console.warn("No active file open.");
+        new Notice("No active file open.");
+        return;
+      }
 
-          // Attempt to create the deck via AnkiConnect
+      const deckName = this.getDeckName(activeFile);
+      if (!deckName) {
+        console.warn("Deck name not found in frontmatter.");
+        new Notice("Deck name not found in frontmatter. Please add 'deck' to the frontmatter.");
+        return;
+      }
+
+      // Attempt to create the deck via AnkiConnect
+      try {
+        const response = await fetch("http://localhost:8765", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            action: "createDeck",
+            version: 6,
+            params: {
+              deck: deckName
+            }
+          })
+        });
+        const result = await response.json();
+        if (result.error) {
+          console.error("Error creating deck via AnkiConnect:", result.error);
+          new Notice(`Failed to create deck '${deckName}'.`);
+          return;
+        } else {
+          console.log(`Deck '${deckName}' creation result:`, result);
+          new Notice(`Deck '${deckName}' is ready.`);
+        }
+      } catch (err) {
+        console.error("Failed to create deck via AnkiConnect:", err);
+        new Notice(`Failed to create deck '${deckName}'.`);
+        return;
+      }
+
+      const fileContent = await this.app.vault.read(activeFile);
+      const lines = fileContent.split('\n');
+      let updated = false;
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const idx = line.indexOf(' ::: ');
+        if (idx === -1) {
+          // Line does not contain flashcard delimiter, ignore
+          continue;
+        }
+
+        const noteIdMatch = line.match(/<!--\s*noteId:(\d+)\s*-->/);
+        const front = line.slice(0, idx).trim();
+        // Extract back content ignoring the noteId comment if present
+        let back = line.slice(idx + 5).trim();
+        if (noteIdMatch) {
+          // Remove the noteId comment from back if present
+          back = back.replace(/<!--\s*noteId:\d+\s*-->/, '').trim();
+        }
+
+        if (!front || !back) {
+          console.warn(`Skipping line ${i} due to empty front or back:`, line);
+          continue;
+        }
+
+        if (!noteIdMatch) {
+          // Add new note
+          const note = {
+            deckName: deckName,
+            modelName: "Basic",
+            fields: {
+              Front: front,
+              Back: back
+            },
+            tags: ["obsidian"]
+          };
           try {
-            const response = await fetch("http://localhost:8765", {
+            const addResponse = await fetch("http://localhost:8765", {
               method: "POST",
               headers: {
                 "Content-Type": "application/json"
               },
               body: JSON.stringify({
-                action: "createDeck",
+                action: "addNote",
                 version: 6,
                 params: {
-                  deck: deckName
+                  note: note
                 }
               })
             });
-            const result = await response.json();
-            if (result.error) {
-              console.error("Error creating deck via AnkiConnect:", result.error);
-              new Notice(`Failed to create deck '${deckName}'.`);
+            const addResult = await addResponse.json();
+            if (addResult.error) {
+              console.error(`Failed to add note at line ${i}:`, addResult.error);
+              new Notice(`Failed to add note at line ${i}: ${addResult.error}`);
             } else {
-              console.log(`Deck '${deckName}' creation result:`, result);
-              new Notice(`Deck '${deckName}' is ready.`);
+              const newNoteId = addResult.result;
+              console.log(`Note added at line ${i} with noteId: ${newNoteId}`);
+              lines[i] = line + ` <!-- noteId:${newNoteId} -->`;
+              updated = true;
+              new Notice(`Note added at line ${i}.`);
             }
           } catch (err) {
-            console.error("Failed to create deck via AnkiConnect:", err);
-            new Notice(`Failed to create deck '${deckName}'.`);
-          }
-
-          // Read the content of the active file
-          const fileContent = await this.app.vault.read(activeFile);
-          const lines = fileContent.split('\n');
-
-          // Parse lines containing ' ::: ' as flashcards
-          const flashcards: { front: string; back: string }[] = [];
-          lines.forEach(line => {
-            const idx = line.indexOf(' ::: ');
-            if (idx !== -1) {
-              const front = line.slice(0, idx).trim();
-              const back = line.slice(idx + 5).trim();
-              if (front && back) {
-                flashcards.push({ front, back });
-              } else {
-                console.warn("Skipped flashcard with empty front or back:", line);
-              }
-            }
-          });
-
-          if (flashcards.length > 0) {
-            console.log("Parsed flashcards:", flashcards);
-            new Notice(`Found ${flashcards.length} flashcard(s) in this file.`);
-          } else {
-            console.info("No flashcards found in this file.");
-            new Notice("No flashcards found in this file.");
-            return; // Exit early if no flashcards to process
-          }
-
-          // Prepare notes for Anki
-          const notes = flashcards.map(flashcard => ({
-            deckName: deckName,
-            modelName: "Basic",
-            fields: {
-              Front: flashcard.front,
-              Back: flashcard.back
-            },
-            tags: ["obsidian"]
-          }));
-
-          console.log("Prepared notes for Anki:", notes);
-
-          // Check which notes can be added
-          const canAddArray = await this.checkAddableNotes(notes);
-
-          // Add notes that can be added or update existing ones
-          for (let i = 0; i < notes.length; i++) {
-            if (canAddArray[i]) {
-              try {
-                const addResponse = await fetch("http://localhost:8765", {
-                  method: "POST",
-                  headers: {
-                    "Content-Type": "application/json"
-                  },
-                  body: JSON.stringify({
-                    action: "addNote",
-                    version: 6,
-                    params: {
-                      note: notes[i]
-                    }
-                  })
-                });
-                const addResult = await addResponse.json();
-                if (addResult.error) {
-                  console.error(`Failed to add note ${i}:`, addResult.error);
-                  new Notice(`Failed to add note ${i}: ${addResult.error}`);
-                } else {
-                  const noteId = addResult.result;
-                  console.log(`Note ${i} added with noteId: ${noteId}`);
-
-                  // Append noteId comment to corresponding line if not already present
-                  for (let j = 0; j < lines.length; j++) {
-                    const idx = lines[j].indexOf(' ::: ');
-                    if (idx !== -1) {
-                      const front = lines[j].slice(0, idx).trim();
-                      const back = lines[j].slice(idx + 5).trim();
-                      if (front === flashcards[i].front && back === flashcards[i].back) {
-                        if (!lines[j].includes(`<!-- noteId:`)) {
-                          lines[j] = lines[j] + ` <!-- noteId:${noteId} -->`;
-                        }
-                        break;
-                      }
-                    }
-                  }
-                }
-              } catch (err) {
-                console.error(`Failed to add note ${i} via AnkiConnect:`, err);
-                new Notice(`Failed to add note ${i} via AnkiConnect.`);
-              }
-            } else {
-              // Note cannot be added, check if noteId exists in the line and update note
-              let noteIdFound = false;
-              for (let j = 0; j < lines.length; j++) {
-                const idx = lines[j].indexOf(' ::: ');
-                if (idx !== -1) {
-                  const front = lines[j].slice(0, idx).trim();
-                  const backAndComment = lines[j].slice(idx + 5).trim();
-                  const noteIdMatch = lines[j].match(/<!--\s*noteId:(\d+)\s*-->/);
-                  if (front === flashcards[i].front && backAndComment.startsWith(flashcards[i].back) && noteIdMatch) {
-                    const noteId = parseInt(noteIdMatch[1]);
-                    noteIdFound = true;
-                    // Prepare updateNote request
-                    const updateParams = {
-                      action: "updateNoteFields",
-                      version: 6,
-                      params: {
-                        note: {
-                          id: noteId,
-                          fields: {
-                            Front: flashcards[i].front,
-                            Back: flashcards[i].back
-                          }
-                        }
-                      }
-                    };
-                    try {
-                      const updateResponse = await fetch("http://localhost:8765", {
-                        method: "POST",
-                        headers: {
-                          "Content-Type": "application/json"
-                        },
-                        body: JSON.stringify(updateParams)
-                      });
-                      const updateResult = await updateResponse.json();
-                      if (updateResult.error) {
-                        console.error(`Failed to update note ${noteId}:`, updateResult.error);
-                        new Notice(`Failed to update note ${noteId}: ${updateResult.error}`);
-                      } else {
-                        console.log(`Note ${noteId} updated successfully.`);
-                        new Notice(`Note ${noteId} updated successfully.`);
-                      }
-                    } catch (err) {
-                      console.error(`Failed to update note ${noteId} via AnkiConnect:`, err);
-                      new Notice(`Failed to update note ${noteId} via AnkiConnect.`);
-                    }
-                    break;
-                  }
-                }
-              }
-              if (!noteIdFound) {
-                console.info(`Skipping note ${i} as it cannot be added and no noteId found.`);
-              }
-            }
-          }
-
-          // Update the file with appended noteId comments
-          const updatedContent = lines.join('\n');
-          try {
-            await this.app.vault.modify(activeFile, updatedContent);
-            console.log("File updated with note IDs.");
-          } catch (err) {
-            console.error("Failed to update file with note IDs:", err);
-            new Notice("Failed to update file with note IDs.");
+            console.error(`Failed to add note at line ${i} via AnkiConnect:`, err);
+            new Notice(`Failed to add note at line ${i} via AnkiConnect.`);
           }
         } else {
-          console.warn("Deck name not found in frontmatter.");
-          new Notice("Deck name not found in frontmatter. Please add 'deck' to the frontmatter.");
+          // Update existing note
+          const noteId = parseInt(noteIdMatch[1]);
+          const updateParams = {
+            action: "updateNoteFields",
+            version: 6,
+            params: {
+              note: {
+                id: noteId,
+                fields: {
+                  Front: front,
+                  Back: back
+                }
+              }
+            }
+          };
+          try {
+            const updateResponse = await fetch("http://localhost:8765", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json"
+              },
+              body: JSON.stringify(updateParams)
+            });
+            const updateResult = await updateResponse.json();
+            if (updateResult.error) {
+              console.error(`Failed to update note ${noteId} at line ${i}:`, updateResult.error);
+              new Notice(`Failed to update note ${noteId} at line ${i}: ${updateResult.error}`);
+            } else {
+              console.log(`Note ${noteId} updated successfully at line ${i}.`);
+              new Notice(`Note ${noteId} updated successfully at line ${i}.`);
+            }
+          } catch (err) {
+            console.error(`Failed to update note ${noteId} at line ${i} via AnkiConnect:`, err);
+            new Notice(`Failed to update note ${noteId} at line ${i} via AnkiConnect.`);
+          }
+        }
+      }
+
+      if (updated) {
+        const updatedContent = lines.join('\n');
+        try {
+          await this.app.vault.modify(activeFile, updatedContent);
+          console.log("File updated with note IDs.");
+        } catch (err) {
+          console.error("Failed to update file with note IDs:", err);
+          new Notice("Failed to update file with note IDs.");
         }
       } else {
-        console.warn("No active file open.");
-        new Notice("No active file open.");
+        console.log("No new notes added, file not updated.");
       }
     });
   }
