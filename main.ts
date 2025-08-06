@@ -24,6 +24,49 @@ export default class ObsidianToAnkiPlugin extends Plugin {
     return undefined;
   }
 
+  extractNoteIds(lines: string[]): number[] {
+    const noteIds: number[] = [];
+    const noteIdRegex = /<!--\s*noteId:(\d+)\s*-->/g;
+    for (const line of lines) {
+      let match;
+      while ((match = noteIdRegex.exec(line)) !== null) {
+        noteIds.push(parseInt(match[1]));
+      }
+    }
+    return noteIds;
+  }
+
+  parseValidNoteIds(lines: string[]): number[] {
+    const validNoteIdsRegex = /<!--\s*validNoteIds:\s*([\d,\s]+)\s*-->/;
+    for (const line of lines) {
+      const match = line.match(validNoteIdsRegex);
+      if (match) {
+        return match[1]
+          .split(",")
+          .map(id => parseInt(id.trim()))
+          .filter(id => !isNaN(id));
+      }
+    }
+    return [];
+  }
+
+  updateValidNoteIdsComment(lines: string[], validIds: number[]): string[] {
+    const validNoteIdsRegex = /<!--\s*validNoteIds:\s*([\d,\s]+)\s*-->/;
+    const commentLine = `<!-- validNoteIds: ${validIds.join(",")} -->`;
+    let found = false;
+    const updatedLines = lines.map(line => {
+      if (validNoteIdsRegex.test(line)) {
+        found = true;
+        return commentLine;
+      }
+      return line;
+    });
+    if (!found) {
+      updatedLines.push(commentLine);
+    }
+    return updatedLines;
+  }
+
   async onload() {
     console.log("Obsidian to Anki plugin has been loaded.");
 
@@ -188,6 +231,57 @@ export default class ObsidianToAnkiPlugin extends Plugin {
         }
       } else {
         console.log("No new notes added, file not updated.");
+      }
+
+      // After add/update notes, handle deletion of removed notes
+      try {
+        const currentNoteIds = this.extractNoteIds(lines);
+        const previousNoteIds = this.parseValidNoteIds(lines);
+
+        const deletedNoteIds = previousNoteIds.filter(id => !currentNoteIds.includes(id));
+
+        if (deletedNoteIds.length > 0) {
+          console.log("Deleting notes with IDs:", deletedNoteIds);
+          const deleteResponse = await fetch("http://localhost:8765", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              action: "deleteNotes",
+              version: 6,
+              params: {
+                notes: deletedNoteIds
+              }
+            })
+          });
+          const deleteResult = await deleteResponse.json();
+          if (deleteResult.error) {
+            console.error("Failed to delete notes via AnkiConnect:", deleteResult.error);
+            new Notice(`Failed to delete notes: ${deleteResult.error}`);
+          } else {
+            console.log("Successfully deleted notes:", deletedNoteIds);
+            new Notice(`Deleted notes: ${deletedNoteIds.join(", ")}`);
+          }
+        }
+
+        // Update or add validNoteIds comment line
+        const linesWithoutValidNoteIds = lines.filter(line => !/<!--\s*validNoteIds:\s*[\d,\s]+-->/i.test(line));
+        const updatedLinesWithValidNoteIds = this.updateValidNoteIdsComment(linesWithoutValidNoteIds, currentNoteIds);
+        const finalContent = updatedLinesWithValidNoteIds.join('\n');
+
+        if (finalContent !== fileContent) {
+          try {
+            await this.app.vault.modify(activeFile, finalContent);
+            console.log("File updated with validNoteIds comment.");
+          } catch (err) {
+            console.error("Failed to update file with validNoteIds comment:", err);
+            new Notice("Failed to update file with validNoteIds comment.");
+          }
+        }
+      } catch (err) {
+        console.error("Error during note deletion and validNoteIds update:", err);
+        new Notice("Error during note deletion and validNoteIds update.");
       }
     });
   }
