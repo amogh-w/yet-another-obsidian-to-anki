@@ -1,6 +1,6 @@
 import { Plugin, Notice, TFile } from "obsidian";
 
-export default class ObsidianToAnkiPlugin extends Plugin {
+export default class YetAnotherObsidianToAnkiPlugin extends Plugin {
   getDeckName(file: TFile): string | undefined {
     // Retrieve the metadata cache for the file
     const cache = this.app.metadataCache.getFileCache(file);
@@ -68,7 +68,7 @@ export default class ObsidianToAnkiPlugin extends Plugin {
   }
 
   async onload() {
-    console.log("Obsidian to Anki plugin has been loaded.");
+    console.log("Yet Another Obsidian To Anki plugin has been loaded.");
 
     this.addRibbonIcon("dice", "Parse flashcards in current file", async () => {
       const activeFile = this.app.workspace.getActiveFile();

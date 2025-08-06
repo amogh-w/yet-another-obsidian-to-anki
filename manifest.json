@@ -1,9 +1,9 @@
 {
-  "id": "obsidian-to-anki",
-  "name": "Obsidian to Anki",
+  "id": "yet-another-obsidian-to-anki",
+  "name": "Yet Another Obsidian To Anki",
   "version": "1.0.0",
   "minAppVersion": "0.15.0",
-  "description": "Convert markdown Q/A into Anki flashcards using AnkiConnect.",
+  "description": "Yet another Obsidian plugin for turning markdown into Anki flashcards.",
   "author": "You",
   "authorUrl": "",
   "main": "dist/main.js"
