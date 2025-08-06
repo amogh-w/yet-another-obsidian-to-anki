@@ -1,6 +1,18 @@
 import { Plugin, Notice, TFile } from "obsidian";
 
+/**
+ * Yet Another Obsidian To Anki Plugin
+ * 
+ * This plugin enables users to create, update, and delete Anki flashcards directly from Obsidian notes.
+ * It reads flashcard data from the current note, interacts with AnkiConnect to manage decks and notes,
+ * and keeps track of note IDs within the file for synchronization.
+ */
 export default class YetAnotherObsidianToAnkiPlugin extends Plugin {
+  /**
+   * Retrieves the deck name specified in the frontmatter of the given file.
+   * @param {TFile} file - The Obsidian file to extract the deck name from.
+   * @returns {string | undefined} The deck name if found; otherwise undefined.
+   */
   getDeckName(file: TFile): string | undefined {
     // Retrieve the metadata cache for the file
     const cache = this.app.metadataCache.getFileCache(file);
@@ -24,6 +36,12 @@ export default class YetAnotherObsidianToAnkiPlugin extends Plugin {
     return undefined;
   }
 
+  /**
+   * Extracts all note IDs from the given lines of text.
+   * Note IDs are expected to be in the format <!-- noteId:123 -->.
+   * @param {string[]} lines - Array of lines from the note file.
+   * @returns {number[]} Array of extracted note IDs.
+   */
   extractNoteIds(lines: string[]): number[] {
     const noteIds: number[] = [];
     const noteIdRegex = /<!--\s*noteId:(\d+)\s*-->/g;
@@ -36,6 +54,12 @@ export default class YetAnotherObsidianToAnkiPlugin extends Plugin {
     return noteIds;
   }
 
+  /**
+   * Parses the validNoteIds comment line to retrieve an array of valid note IDs.
+   * The comment line format is expected to be <!-- validNoteIds: 123, 456, 789 -->.
+   * @param {string[]} lines - Array of lines from the note file.
+   * @returns {number[]} Array of valid note IDs parsed from the comment, or empty if none found.
+   */
   parseValidNoteIds(lines: string[]): number[] {
     const validNoteIdsRegex = /<!--\s*validNoteIds:\s*([\d,\s]+)\s*-->/;
     for (const line of lines) {
@@ -50,6 +74,12 @@ export default class YetAnotherObsidianToAnkiPlugin extends Plugin {
     return [];
   }
 
+  /**
+   * Updates or adds the validNoteIds comment line in the given lines.
+   * @param {string[]} lines - Array of lines from the note file.
+   * @param {number[]} validIds - Array of valid note IDs to include in the comment.
+   * @returns {string[]} Updated array of lines with the validNoteIds comment line.
+   */
   updateValidNoteIdsComment(lines: string[], validIds: number[]): string[] {
     const validNoteIdsRegex = /<!--\s*validNoteIds:\s*([\d,\s]+)\s*-->/;
     const commentLine = `<!-- validNoteIds: ${validIds.join(",")} -->`;
@@ -62,11 +92,16 @@ export default class YetAnotherObsidianToAnkiPlugin extends Plugin {
       return line;
     });
     if (!found) {
+      // Append the validNoteIds comment line if not found
       updatedLines.push(commentLine);
     }
     return updatedLines;
   }
 
+  /**
+   * Called when the plugin is loaded. Adds a ribbon icon to trigger flashcard parsing
+   * and synchronization with Anki via AnkiConnect.
+   */
   async onload() {
     console.log("Yet Another Obsidian To Anki plugin has been loaded.");
 
@@ -123,7 +158,7 @@ export default class YetAnotherObsidianToAnkiPlugin extends Plugin {
         const line = lines[i];
         const idx = line.indexOf(' ::: ');
         if (idx === -1) {
-          // Line does not contain flashcard delimiter, ignore
+          // Line does not contain flashcard delimiter, skip processing
           continue;
         }
 
@@ -142,7 +177,7 @@ export default class YetAnotherObsidianToAnkiPlugin extends Plugin {
         }
 
         if (!noteIdMatch) {
-          // Add new note
+          // Add new note to Anki
           const note = {
             deckName: deckName,
             modelName: "Basic",
@@ -173,6 +208,7 @@ export default class YetAnotherObsidianToAnkiPlugin extends Plugin {
             } else {
               const newNoteId = addResult.result;
               console.log(`Note added at line ${i} with noteId: ${newNoteId}`);
+              // Append noteId comment to the line
               lines[i] = line + ` <!-- noteId:${newNoteId} -->`;
               updated = true;
               new Notice(`Note added at line ${i}.`);
@@ -182,7 +218,7 @@ export default class YetAnotherObsidianToAnkiPlugin extends Plugin {
             new Notice(`Failed to add note at line ${i} via AnkiConnect.`);
           }
         } else {
-          // Update existing note
+          // Update existing note in Anki
           const noteId = parseInt(noteIdMatch[1]);
           const updateParams = {
             action: "updateNoteFields",
@@ -233,11 +269,12 @@ export default class YetAnotherObsidianToAnkiPlugin extends Plugin {
         console.log("No new notes added, file not updated.");
       }
 
-      // After add/update notes, handle deletion of removed notes
+      // After adding/updating notes, handle deletion of notes removed from the file
       try {
         const currentNoteIds = this.extractNoteIds(lines);
         const previousNoteIds = this.parseValidNoteIds(lines);
 
+        // Determine which notes have been deleted from the file
         const deletedNoteIds = previousNoteIds.filter(id => !currentNoteIds.includes(id));
 
         if (deletedNoteIds.length > 0) {
@@ -265,7 +302,7 @@ export default class YetAnotherObsidianToAnkiPlugin extends Plugin {
           }
         }
 
-        // Update or add validNoteIds comment line
+        // Update or add the validNoteIds comment line to reflect current notes
         const linesWithoutValidNoteIds = lines.filter(line => !/<!--\s*validNoteIds:\s*[\d,\s]+-->/i.test(line));
         const updatedLinesWithValidNoteIds = this.updateValidNoteIdsComment(linesWithoutValidNoteIds, currentNoteIds);
         const finalContent = updatedLinesWithValidNoteIds.join('\n');
