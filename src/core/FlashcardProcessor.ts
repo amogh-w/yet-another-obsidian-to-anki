@@ -1,4 +1,5 @@
 import { AnkiManager } from "./AnkiManager";
+import { logDebug, logInfo, logWarn, logError } from "../utils/logger";
 
 /**
  * Regular expression to extract a note ID from a comment.
@@ -59,14 +60,33 @@ export class FlashcardProcessor {
       if (noteIdMatch) {
         // Existing note: update in Anki
         const noteId: number = parseInt(noteIdMatch[1]);
-        await this.manager.updateNote(noteId, front, back);
-        noteIdsInFile.push(noteId);
+        try {
+          logInfo(`Updating noteId ${noteId} with front: "${front}" and back: "${back}"`);
+          await this.manager.updateNote(noteId, front, back);
+          noteIdsInFile.push(noteId);
+        } catch (error) {
+          logError(`Failed to update noteId ${noteId}: ${error}`);
+          throw error;
+        }
       } else {
         // New note: add to Anki, append noteId comment
-        const newId: number = await this.manager.addNote(front, back);
-        lines[i] = `${line} <!-- noteId:${newId} -->`;
-        noteIdsInFile.push(newId);
-        updated = true;
+        try {
+          logInfo(`Adding new note with front: "${front}" and back: "${back}"`);
+          const newId: number = await this.manager.addNote(front, back);
+          lines[i] = `${line} <!-- noteId:${newId} -->`;
+          noteIdsInFile.push(newId);
+          updated = true;
+        } catch (error: any) {
+          if (
+            error.message.includes("cannot create note because it is a duplicate") ||
+            error.message.includes("duplicate")
+          ) {
+            logWarn(`Duplicate note detected for front: "${front}". Skipping add.`);
+          } else {
+            logError(`Failed to add new note with front: "${front}" and back: "${back}": ${error}`);
+            throw error;
+          }
+        }
       }
     }
 
@@ -76,13 +96,20 @@ export class FlashcardProcessor {
     const deletedIds: number[] = prevIds.filter(id => !noteIdsInFile.includes(id));
 
     if (deletedIds.length) {
-      // Remove deleted notes from Anki
-      await this.manager.deleteNotes(deletedIds);
+      try {
+        logWarn(`Deleting notes with IDs: ${deletedIds.join(", ")}`);
+        await this.manager.deleteNotes(deletedIds);
+      } catch (error) {
+        logError(`Failed to delete notes with IDs ${deletedIds.join(", ")}: ${error}`);
+        throw error;
+      }
     }
 
     // Remove any previous validNoteIds comment and append updated one at end
     const cleanedLines: string[] = lines.filter(line => !VALID_IDS_REGEX.test(line));
     cleanedLines.push(`<!-- validNoteIds: ${noteIdsInFile.join(",")} -->`);
+
+    logDebug(`Process completed. Content updated: ${updated}`);
 
     return cleanedLines.join("\n");
   }

@@ -2,6 +2,7 @@ import { Plugin } from "obsidian";
 import { AnkiManager } from "./src/core/AnkiManager";
 import { FlashcardProcessor } from "./src/core/FlashcardProcessor";
 import { getDeckNameFromFrontmatter } from "./src/utils/frontmatter";
+import { logDebug, logInfo, logWarn, logError } from "./src/utils/logger";
 
 /**
  * Main class for the Yet Another Obsidian To Anki Plugin.
@@ -21,18 +22,18 @@ export default class YetAnotherObsidianToAnkiPlugin extends Plugin {
    * - Modifies the note if changes were made
    */
   async onload() {
-    console.log("Yet Another Obsidian To Anki plugin has been loaded.");
+    logInfo("Plugin loaded.");
 
     this.addRibbonIcon("dice", "Sync flashcards with Anki", async () => {
       const file = this.app.workspace.getActiveFile();
       if (!file) {
-        console.warn("No active file open.");
+        logWarn("No active file open.");
         return;
       }
 
       const deckName = getDeckNameFromFrontmatter(this.app, file);
       if (!deckName) {
-        console.warn("Deck name not found in frontmatter.");
+        logWarn("Deck name not found in frontmatter.");
         return;
       }
 
@@ -49,7 +50,7 @@ export default class YetAnotherObsidianToAnkiPlugin extends Plugin {
       // Update the file only if changes were made
       if (updatedContent && updatedContent !== content) {
         await this.app.vault.modify(file, updatedContent);
-        console.log("File updated successfully.");
+        logInfo("File updated successfully.");
       }
     });
   }

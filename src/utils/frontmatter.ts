@@ -1,4 +1,5 @@
 import { TFile, MetadataCache, App, Notice } from "obsidian";
+import { logInfo, logWarn } from "./logger";
 
 /**
  * Retrieves the deck name from the frontmatter of a given Obsidian file.
@@ -16,13 +17,16 @@ export function getDeckNameFromFrontmatter(app: App, file: TFile): string | unde
 
   if (!frontmatter) {
     new Notice("No frontmatter found in the current file.");
+    logWarn("No frontmatter found in the current file.");
     return;
   }
 
   if (!frontmatter.deck) {
     new Notice("Missing 'deck' field in frontmatter.");
+    logWarn("Missing 'deck' field in frontmatter.");
     return;
   }
 
+  logInfo(`Deck name retrieved: ${frontmatter.deck}`);
   return frontmatter.deck;
 }

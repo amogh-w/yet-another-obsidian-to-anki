@@ -2,6 +2,8 @@
  * AnkiManager class is responsible for handling communication with AnkiConnect.
  * It supports deck creation, note addition, note updates, and note deletions.
  */
+import { logDebug, logInfo, logWarn, logError } from "../utils/logger";
+
 export class AnkiManager {
   constructor(private deckName: string) {}
 
@@ -13,6 +15,7 @@ export class AnkiManager {
    * @throws Error if AnkiConnect returns an error.
    */
   async request(action: string, params: any): Promise<any> {
+    logDebug(`Sending request to AnkiConnect: action=${action}, params=${JSON.stringify(params)}`);
     const response = await fetch("http://localhost:8765", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -20,7 +23,11 @@ export class AnkiManager {
     });
 
     const json = await response.json();
-    if (json.error) throw new Error(json.error);
+    if (json.error) {
+      logError(`AnkiConnect returned error for action=${action}: ${json.error}`);
+      throw new Error(json.error);
+    }
+    logDebug(`AnkiConnect returned result for action=${action}: ${JSON.stringify(json.result)}`);
     return json.result;
   }
 
@@ -29,6 +36,7 @@ export class AnkiManager {
    * @returns The result from AnkiConnect (usually null or the deck ID).
    */
   async createDeck(): Promise<any> {
+    logInfo(`Creating deck: ${this.deckName}`);
     return this.request("createDeck", { deck: this.deckName });
   }
 
@@ -39,6 +47,7 @@ export class AnkiManager {
    * @returns The note ID of the newly added note.
    */
   async addNote(front: string, back: string): Promise<number> {
+    logInfo(`Adding note to deck ${this.deckName}`);
     return this.request("addNote", {
       note: {
         deckName: this.deckName,
@@ -57,6 +66,7 @@ export class AnkiManager {
    * @returns The result from AnkiConnect.
    */
   async updateNote(noteId: number, front: string, back: string): Promise<any> {
+    logInfo(`Updating note ${noteId} in deck ${this.deckName}`);
     return this.request("updateNoteFields", {
       note: {
         id: noteId,
@@ -71,6 +81,7 @@ export class AnkiManager {
    * @returns The result from AnkiConnect.
    */
   async deleteNotes(noteIds: number[]): Promise<any> {
+    logInfo(`Deleting notes: ${noteIds.join(", ")}`);
     return this.request("deleteNotes", { notes: noteIds });
   }
 }
